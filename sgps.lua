@@ -42,6 +42,7 @@ local expect = dofile("rom/modules/main/cc/expect.lua").expect
 
 --- The channel which GPS requests and responses are broadcast on.
 CHANNEL_GPS = 65534
+CHANNEL_SGPS = 65524
 
 local function trilaterate(A, B, C)
     local a2b = B.vPosition - A.vPosition
@@ -282,7 +283,7 @@ function slocate(pk, _nTimeout, _bDebug)
         if e == "modem_message" then
             -- We received a reply from a modem
             local sSide, sChannel, sReplyChannel, tMessage, nDistance = p1, p2, p3, p4, p5
-            if sSide == sModemSide and sChannel == CHANNEL_GPS and sReplyChannel == CHANNEL_GPS and nDistance then
+            if sSide == sModemSide and sChannel == CHANNEL_SGPS and sReplyChannel == CHANNEL_SGPS and nDistance then
                 -- Received the correct message from the correct modem: use it to determine position
 
                 if type(tMessage) == "table" and #tMessage == 5 and #tMessage[5] == 64 and type(tMessage[4]) == "string" and #tMessage[4] < 8192 and tonumber(tMessage[1]) and tonumber(tMessage[2]) and tonumber(tMessage[3]) then
