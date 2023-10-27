@@ -84,9 +84,7 @@ local secretKey = (function()
   if not h then return false end
   local d = h.readAll()
   h.close()
-  print(d)
   d = parseStringifiedKey(d)
-  print(d)
   return d
 end)()
 
@@ -105,7 +103,7 @@ for i, modem in ipairs(config.modems) do
   end
 end
 
-(function()
+_=(function()
   local s = stringifyKey(publicKey)
 
   local h = fs.open(pubkeyPath, "w")
