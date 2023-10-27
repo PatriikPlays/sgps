@@ -266,13 +266,13 @@ function slocate(pk, _nTimeout, _bDebug)
     -- Open GPS channel to listen for ping responses
     local modem = peripheral.wrap(sModemSide)
     local bCloseChannel = false
-    if not modem.isOpen(CHANNEL_GPS) then
-        modem.open(CHANNEL_GPS)
+    if not modem.isOpen(CHANNEL_SGPS) then
+        modem.open(CHANNEL_SGPS)
         bCloseChannel = true
     end
 
     -- Send a ping to listening GPS hosts
-    modem.transmit(CHANNEL_GPS, CHANNEL_GPS, "PING")
+    modem.transmit(CHANNEL_SGPS, CHANNEL_SGPS, "PING")
 
     -- Wait for the responses
     local tFixes = {}
@@ -283,6 +283,7 @@ function slocate(pk, _nTimeout, _bDebug)
         if e == "modem_message" then
             -- We received a reply from a modem
             local sSide, sChannel, sReplyChannel, tMessage, nDistance = p1, p2, p3, p4, p5
+
             if sSide == sModemSide and sChannel == CHANNEL_SGPS and sReplyChannel == CHANNEL_SGPS and nDistance then
                 -- Received the correct message from the correct modem: use it to determine position
 
@@ -345,7 +346,7 @@ function slocate(pk, _nTimeout, _bDebug)
 
     -- Close the channel, if we opened one
     if bCloseChannel then
-        modem.close(CHANNEL_GPS)
+        modem.close(CHANNEL_SGPS)
     end
 
     -- Return the response
