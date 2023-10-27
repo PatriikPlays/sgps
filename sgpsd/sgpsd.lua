@@ -98,7 +98,11 @@ end
 local publicKey = ed25519.publicKey(secretKey)
 
 for i, modem in ipairs(config.modems) do
-  peripheral.call(modem[1], i==1 and "open" or "closeAll", config.port)
+  peripheral.call(modem[1], "closeAll")
+  if i == 1 then
+    peripheral.call(modem[1], config.serveGPS and "open" or "close", config.gpsPort)
+    peripheral.call(modem[1], config.serveSGPS and "open" or "close", config.sgpsPort)
+  end
 end
 
 (function()
@@ -117,21 +121,20 @@ while true do
   print("Served "..sgpsServed.." SGPS requests")
   print("\nPublic key: "..pubkeyPath)
   local _, periph, port, replyPort, msg, dist = os.pullEvent("modem_message")
-  if periph == config.modems[1][1] and port == config.port and (msg == "PING" or msg == "SPING") and dist then
+
+  if periph == config.modems[1][1] and port == config.gpsPort and msg == "PING" and dist and config.serveGPS then
     for _, modem in ipairs(config.modems) do
-      if msg == "PING" then
-        peripheral.call(modem[1], "transmit", replyPort, config.port, { modem[2], modem[3], modem[4] })
-      elseif msg == "SPING" then
-        local sgpsStr = modem[2]..";"..modem[3]..";"..modem[4]
-        local signature = ed25519.sign(secretKey, publicKey, sgpsStr)
-        peripheral.call(modem[1], "transmit", replyPort, config.port, { modem[2], modem[3], modem[4], sgpsStr, signature })
-      end
+      peripheral.call(modem[1], "transmit", replyPort, config.gpsPort, { modem[2], modem[3], modem[4] })
     end
 
-    if msg == "PING" then
-      gpsServed = gpsServed + 1
-    elseif msg == "SPING" then
-      sgpsServed = sgpsServed + 1
+    gpsServed = gpsServed + 1
+  elseif periph == config.modems[1][1] and port == config.sgpsPort and msg == "PING" and dist and config.serveSGPS then
+    for _, modem in ipairs(config.modems) do
+      local sgpsStr = modem[2]..";"..modem[3]..";"..modem[4]
+      local signature = ed25519.sign(secretKey, publicKey, sgpsStr)
+      peripheral.call(modem[1], "transmit", replyPort, config.gpsPort, { modem[2], modem[3], modem[4], sgpsStr, signature })
     end
+
+    sgpsServed = sgpsServed + 1
   end
 end
