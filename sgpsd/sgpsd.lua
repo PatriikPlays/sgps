@@ -17,6 +17,55 @@ initRandom()
 local srcPath = fs.getDir(shell.getRunningProgram())
 local configPath = fs.combine(srcPath, "sgpsd.conf")
 local pubkeyPath = fs.combine(srcPath, "key.pub")
+local seckeyPath = fs.combine(srcPath, "key")
+
+local function stringifyKey(key)
+  local s = ""
+  for i=1,#key do
+    s = s .. string.format("\\%03d", key:sub(i,i):byte())
+  end
+  return s
+end
+
+local function parseStringifiedKey(key)
+  return load("return \""..key:gsub("\"", "\\\""):gsub("\n", "\\n").."\"")()
+end
+
+local args = {...}
+
+if args[1] and args[1]:lower() == "help" then
+  print("Usage:\n")
+  print("help   - help")
+  print("keygen - generate keys")
+  return
+elseif args[1] and args[1]:lower() == "keygen" then
+  io.write("Generating key pair... ")
+  local seckey = random.random(32)
+  local pubkey = ed25519.publicKey(seckey)
+  print("Done")
+
+  if fs.exists(seckeyPath) then
+    local s = "I am aware that this will replace the private key and invalidate the public key."
+    printError("Private key file already exists, please enter \""..s.."\" to confirm this, anything else to cancel")
+    local r = read()
+    if r == s then
+      print("Continuing")
+    else
+      printError("Cancelled")
+      return
+    end
+  end
+
+  io.write("Saving key pair to file... ")
+  local h = fs.open(seckeyPath, "w")
+  h.write(stringifyKey(seckey))
+  h.close()
+  local h = fs.open(pubkeyPath, "w")
+  h.write(stringifyKey(pubkey))
+  h.close()
+  print("Done")
+  return
+end
 
 local config = (function()
   local h = assert(fs.open(configPath, "r"), string.format("Failed to open config at %s", configPath))
@@ -30,7 +79,22 @@ if #config.modems == 0 then
   error("Expected at least one modem")
 end
 
-local secretKey = config.secretKey
+local secretKey = (function()
+  local h = fs.open(seckeyPath, "r")
+  if not h then return false end
+  local d = h.readAll()
+  h.close()
+  print(d)
+  d = parseStringifiedKey(d)
+  print(d)
+  return d
+end)()
+
+if secretKey == false then
+  printError("No key file: "..seckeyPath)
+  return
+end
+
 local publicKey = ed25519.publicKey(secretKey)
 
 for i, modem in ipairs(config.modems) do
@@ -38,10 +102,7 @@ for i, modem in ipairs(config.modems) do
 end
 
 (function()
-  local s = ""
-  for i=1,#publicKey do
-    s = s .. string.format("\\%03d", publicKey:sub(i,i):byte())
-  end
+  local s = stringifyKey(publicKey)
 
   local h = fs.open(pubkeyPath, "w")
   h.write(s)
@@ -63,7 +124,6 @@ while true do
       elseif msg == "SPING" then
         local sgpsStr = modem[2]..";"..modem[3]..";"..modem[4]
         local signature = ed25519.sign(secretKey, publicKey, sgpsStr)
-        sgpsStr = modem[2]..";"..modem[3]..";"..modem[4]+1
         peripheral.call(modem[1], "transmit", replyPort, config.port, { modem[2], modem[3], modem[4], sgpsStr, signature })
       end
     end
