@@ -272,7 +272,7 @@ function slocate(pk, _nTimeout, _bDebug)
     end
 
     -- Send a ping to listening GPS hosts
-    modem.transmit(CHANNEL_GPS, CHANNEL_GPS, "SPING")
+    modem.transmit(CHANNEL_GPS, CHANNEL_GPS, "PING")
 
     -- Wait for the responses
     local tFixes = {}
