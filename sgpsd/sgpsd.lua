@@ -130,7 +130,7 @@ while true do
     for _, modem in ipairs(config.modems) do
       local sgpsStr = modem[2]..";"..modem[3]..";"..modem[4]
       local signature = ed25519.sign(secretKey, publicKey, sgpsStr)
-      peripheral.call(modem[1], "transmit", replyPort, config.gpsPort, { modem[2], modem[3], modem[4], sgpsStr, signature })
+      peripheral.call(modem[1], "transmit", replyPort, config.sgpsPort, { modem[2], modem[3], modem[4], sgpsStr, signature })
     end
 
     sgpsServed = sgpsServed + 1
