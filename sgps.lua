@@ -98,6 +98,16 @@ local function narrow(p1, p2, fix)
     end
 end
 
+local function split(str, sep)
+    sep = sep or "%s"
+    local ret, index = {}, 1
+    for match in string.gmatch(str, "([^"..sep.."]+)") do
+        ret[index] = match
+        index = index + 1
+    end
+    return ret
+end
+
 --- Tries to retrieve the computer or turtles own location.
 --
 -- @tparam[opt=2] number timeout The maximum time in seconds taken to establish our
@@ -272,7 +282,12 @@ function slocate(pk, _nTimeout, _bDebug)
     end
 
     -- Send a ping to listening GPS hosts
-    modem.transmit(CHANNEL_SGPS, CHANNEL_SGPS, "PING")
+    local sentid = ""
+    for i=1,32 do
+        sentid = sentid .. string.char(math.random(0,255))
+    end
+
+    modem.transmit(CHANNEL_SGPS, CHANNEL_SGPS, sentid)
 
     -- Wait for the responses
     local tFixes = {}
@@ -287,21 +302,34 @@ function slocate(pk, _nTimeout, _bDebug)
             if sSide == sModemSide and sChannel == CHANNEL_SGPS and sReplyChannel == CHANNEL_SGPS and nDistance then
                 -- Received the correct message from the correct modem: use it to determine position
 
-                if type(tMessage) == "table" and #tMessage == 5 and #tMessage[5] == 64 and type(tMessage[4]) == "string" and #tMessage[4] < 8192 and tonumber(tMessage[1]) and tonumber(tMessage[2]) and tonumber(tMessage[3]) then
+                if type(tMessage) == "table" and #tMessage == 2 and type(tMessage[1]) == "string" and type(tMessage[2]) == "string" and #tMessage[2] == 64 and type(tMessage[1]) == "string" and #tMessage[1] < 1024 then
                     local ok = false
                     for _,v in ipairs(pk) do
-                        if ed25519.verify(v, tMessage[4], tMessage[5]) then
+                        if ed25519.verify(v, tMessage[1], tMessage[2]) then
                             ok = true
                             break
                         end
                     end
 
+                    local parsed = split(tMessage[1], ";")
+
+                    local x, y, z = tonumber(parsed[1]), tonumber(parsed[2]), tonumber(parsed[3])
+                    local id = parsed[4]
+
+                    if not (type(x) == "number" and type(y) == "number" and type(z) == "number" and type(id) == "string") then
+                        ok = false
+                    end
+
+                    if sentid ~= id then
+                        ok = false
+                    end
+
                     if not ok and _bDebug then
-                        print("Received response with invalid signature, ")
+                        print("Received response with invalid signature or invalid format")
                     end
 
                     if ok then
-                        local tFix = { vPosition = vector.new(tMessage[1], tMessage[2], tMessage[3]), nDistance = nDistance }
+                        local tFix = { vPosition = vector.new(x, y, z), nDistance = nDistance }
                         if _bDebug then
                             print(tFix.nDistance .. " metres from " .. tostring(tFix.vPosition))
                         end
