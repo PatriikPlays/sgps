@@ -118,6 +118,7 @@ while true do
   print("Served "..gpsServed.." GPS requests")
   print("Served "..sgpsServed.." SGPS requests")
   print("\nPublic key: "..pubkeyPath)
+
   local _, periph, port, replyPort, msg, dist = os.pullEvent("modem_message")
 
   if periph == config.modems[1][1] and port == config.gpsPort and msg == "PING" and dist and config.serveGPS then
@@ -126,11 +127,11 @@ while true do
     end
 
     gpsServed = gpsServed + 1
-  elseif periph == config.modems[1][1] and port == config.sgpsPort and msg == "PING" and dist and config.serveSGPS then
+  elseif periph == config.modems[1][1] and port == config.sgpsPort and type(msg) == "string" and #msg < 256 and dist and config.serveSGPS then
     for _, modem in ipairs(config.modems) do
-      local sgpsStr = modem[2]..";"..modem[3]..";"..modem[4]
+      local sgpsStr = modem[2]..";"..modem[3]..";"..modem[4]..";"..msg..";"..dist
       local signature = ed25519.sign(secretKey, publicKey, sgpsStr)
-      peripheral.call(modem[1], "transmit", replyPort, config.sgpsPort, { modem[2], modem[3], modem[4], sgpsStr, signature })
+      peripheral.call(modem[1], "transmit", replyPort, config.sgpsPort, { sgpsStr, signature })
     end
 
     sgpsServed = sgpsServed + 1
