@@ -303,60 +303,62 @@ function slocate(pk, _nTimeout, _bDebug)
                 -- Received the correct message from the correct modem: use it to determine position
 
                 if type(tMessage) == "table" and #tMessage == 2 and type(tMessage[1]) == "string" and type(tMessage[2]) == "string" and #tMessage[2] == 64 and type(tMessage[1]) == "string" and #tMessage[1] < 1024 then
-                    local ok = false
-                    for _,v in ipairs(pk) do
-                        if ed25519.verify(v, tMessage[1], tMessage[2]) then
-                            ok = true
-                            break
-                        end
-                    end
-
                     local parsed = split(tMessage[1], ";")
 
-                    local x, y, z = tonumber(parsed[1]), tonumber(parsed[2]), tonumber(parsed[3])
-                    local id = parsed[4]
-
-                    if not (type(x) == "number" and type(y) == "number" and type(z) == "number" and type(id) == "string") then
-                        ok = false
-                    end
-
-                    if sentid ~= id then
-                        ok = false
-                    end
-
-                    if not ok and _bDebug then
-                        print("Received response with invalid signature or invalid format")
-                    end
-
-                    if ok then
-                        local tFix = { vPosition = vector.new(x, y, z), nDistance = nDistance }
-                        if _bDebug then
-                            print(tFix.nDistance .. " metres from " .. tostring(tFix.vPosition))
-                        end
-                        if tFix.nDistance == 0 then
-                            pos1, pos2 = tFix.vPosition, nil
-                        else
-                            -- Insert our new position in our table, with a maximum of three items. If this is close to a
-                            -- previous position, replace that instead of inserting.
-                            local insIndex = math.min(3, #tFixes + 1)
-                            for i, older in pairs(tFixes) do
-                                if (older.vPosition - tFix.vPosition):length() < 1 then
-                                    insIndex = i
-                                    break
-                                end
-                            end
-                            tFixes[insIndex] = tFix
-
-                            if #tFixes >= 3 then
-                                if not pos1 then
-                                    pos1, pos2 = trilaterate(tFixes[1], tFixes[2], tFixes[3])
-                                else
-                                    pos1, pos2 = narrow(pos1, pos2, tFixes[3])
-                                end
+                    if parsed[4] == sentid then
+                        local ok = false
+                        for _,v in ipairs(pk) do
+                            if ed25519.verify(v, tMessage[1], tMessage[2]) then
+                                ok = true
+                                break
                             end
                         end
-                        if pos1 and not pos2 then
-                            break
+
+                        local x, y, z = tonumber(parsed[1]), tonumber(parsed[2]), tonumber(parsed[3])
+                        local id = parsed[4]
+
+                        if not (type(x) == "number" and type(y) == "number" and type(z) == "number" and type(id) == "string") then
+                            ok = false
+                        end
+
+                        if sentid ~= id then
+                            ok = false
+                        end
+
+                        if not ok and _bDebug then
+                            print("Received response with invalid signature or invalid format")
+                        end
+
+                        if ok then
+                            local tFix = { vPosition = vector.new(x, y, z), nDistance = nDistance }
+                            if _bDebug then
+                                print(tFix.nDistance .. " metres from " .. tostring(tFix.vPosition))
+                            end
+                            if tFix.nDistance == 0 then
+                                pos1, pos2 = tFix.vPosition, nil
+                            else
+                                -- Insert our new position in our table, with a maximum of three items. If this is close to a
+                                -- previous position, replace that instead of inserting.
+                                local insIndex = math.min(3, #tFixes + 1)
+                                for i, older in pairs(tFixes) do
+                                    if (older.vPosition - tFix.vPosition):length() < 1 then
+                                        insIndex = i
+                                        break
+                                    end
+                                end
+                                tFixes[insIndex] = tFix
+
+                                if #tFixes >= 3 then
+                                    if not pos1 then
+                                        pos1, pos2 = trilaterate(tFixes[1], tFixes[2], tFixes[3])
+                                    else
+                                        pos1, pos2 = narrow(pos1, pos2, tFixes[3])
+                                    end
+                                end
+                            end
+                            if pos1 and not pos2 then
+                                break
+                            end
                         end
                     end
                 end
