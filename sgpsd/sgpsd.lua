@@ -22,13 +22,25 @@ local seckeyPath = fs.combine(srcPath, "key")
 local function stringifyKey(key)
   local s = ""
   for i=1,#key do
-    s = s .. string.format("\\%03d", key:sub(i,i):byte())
+    s = s .. string.format("%02x", key:sub(i,i):byte())
   end
   return s
 end
 
 local function parseStringifiedKey(key)
-  return load("return \""..key:gsub("\"", "\\\""):gsub("\n", "\\n").."\"")()
+  if #key ~= 64 then
+    return false, "key_length_invalid"
+  end
+
+  local res = ""
+  for i=1,32 do
+    local n = tonumber(key:sub(i*2-1,i*2), 16)
+    if not n then
+      return false, "key_malformated"
+    end
+    res = res .. string.char(n)
+  end
+  return res
 end
 
 local args = {...}
@@ -79,17 +91,23 @@ if #config.modems == 0 then
   error("Expected at least one modem")
 end
 
-local secretKey = (function()
+local secretKey, secretKeyError = (function()
   local h = fs.open(seckeyPath, "r")
-  if not h then return false end
+  if not h then return false, "no_key_file" end
   local d = h.readAll()
   h.close()
-  d = parseStringifiedKey(d)
-  return d
+  d, err = parseStringifiedKey(d)
+  return d, err
 end)()
 
 if secretKey == false then
-  printError("No key file: "..seckeyPath)
+  if secretKeyError == "no_key_file" then
+    printError("No key file: "..seckeyPath)
+  elseif secretKeyError == "key_malformated" then
+    printError("Malformated key in: "..seckeyPath)
+  elseif secretKeyError == "key_length_invalid" then
+    printError("Key length invalid in: "..seckeyPath)
+  end
   return
 end
 
