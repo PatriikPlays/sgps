@@ -399,4 +399,20 @@ function slocate(pk, _nTimeout, _bDebug)
     end
 end
 
-return {locate=locate, slocate=slocate}
+local function parseStringifiedKey(key)
+    if #key ~= 64 then
+      return false, "key_length_invalid"
+    end
+  
+    local res = ""
+    for i=1,32 do
+      local n = tonumber(key:sub(i*2-1,i*2), 16)
+      if not n then
+        return false, "key_malformated"
+      end
+      res = res .. string.char(n)
+    end
+    return res
+  end
+
+return {locate=locate, slocate=slocate, parseStringifiedKey=parseStringifiedKey}
