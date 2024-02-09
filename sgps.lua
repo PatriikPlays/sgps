@@ -278,7 +278,6 @@ function slocate(pk, _nTimeout, _bDebug)
     local bCloseChannel = false
     if not modem.isOpen(CHANNEL_SGPS) then
         modem.open(CHANNEL_SGPS)
-        sleep(1)
         bCloseChannel = true
     end
 
