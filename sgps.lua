@@ -278,6 +278,7 @@ function slocate(pk, _nTimeout, _bDebug)
     local bCloseChannel = false
     if not modem.isOpen(CHANNEL_SGPS) then
         modem.open(CHANNEL_SGPS)
+        sleep(1)
         bCloseChannel = true
     end
 
@@ -286,6 +287,8 @@ function slocate(pk, _nTimeout, _bDebug)
     for i=1,32 do
         sentid = sentid .. string.char(math.random(0,255))
     end
+
+    sentid = sentid:gsub(";","\0")
 
     modem.transmit(CHANNEL_SGPS, CHANNEL_SGPS, sentid)
 
@@ -403,7 +406,7 @@ local function parseStringifiedKey(key)
     if #key ~= 64 then
       return false, "key_length_invalid"
     end
-  
+
     local res = ""
     for i=1,32 do
       local n = tonumber(key:sub(i*2-1,i*2), 16)
