@@ -2,7 +2,7 @@
 
 Secure and reliable [ComputerCraft](https://computercraft.cc) GPS for everyone!
 
-<img src="./assets/diagram.png" width=50% height=50% alt="A diagram showing the inner workings">
+<img src="./assets/diagram.png" width=80% height=80% alt="A diagram showing the inner workings">
 
 ## Technical details
 
