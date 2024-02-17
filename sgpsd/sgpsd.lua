@@ -87,6 +87,9 @@ local config = (function()
   return assert(data, string.format("Failed to parse config at %s", configPath))
 end)()
 
+if #config.sgpsMeta > 255 then
+  error("sgpsMeta can't be longer than 255 characters")
+end
 if #config.modems == 0 then
   error("Expected at least one modem")
 end
@@ -121,13 +124,24 @@ for i, modem in ipairs(config.modems) do
   end
 end
 
-_=(function()
+do
   local s = stringifyKey(publicKey)
 
   local h = fs.open(pubkeyPath, "w")
   h.write(s)
   h.close()
-end)()
+end
+
+-- TODO: great idea, don't rely on big pcall
+local function mkresponse(VERSION, data)
+  if VERSION == 1 then
+    local respData = string.pack(">iiic32Ls1", data.pos[1], data.pos[2], data.pos[3], data.challengeString, os.epoch("utc"), config.sgpsMeta)
+
+    return string.pack(">bs2c64c32", VERSION, respData, ed25519.sign(secretKey, publicKey, respData), publicKey)
+  end
+
+  return false
+end
 
 local sgpsServed, gpsServed = 0, 0
 while true do
@@ -145,11 +159,19 @@ while true do
     end
 
     gpsServed = gpsServed + 1
-  elseif periph == config.modems[1][1] and port == config.sgpsPort and type(msg) == "string" and #msg < 256 and dist and config.serveSGPS then
+  elseif periph == config.modems[1][1] and port == config.sgpsPort and type(msg) == "string" and #msg == 33 and dist and config.serveSGPS then
     for _, modem in ipairs(config.modems) do
-      local sgpsStr = modem[2]..";"..modem[3]..";"..modem[4]..";"..msg..";"..dist
-      local signature = ed25519.sign(secretKey, publicKey, sgpsStr)
-      peripheral.call(modem[1], "transmit", replyPort, config.sgpsPort, { sgpsStr, signature })
+      local ver, challenge = string.unpack(">bc32", msg)
+
+      local ok, resp = pcall(mkresponse, ver, {
+        pos = {modem[2], modem[3], modem[4]},
+        challengeString = challenge
+      })
+
+      if ok and resp then
+        peripheral.call(modem[1], "transmit", replyPort, config.sgpsPort, resp)
+      end
+      if not ok then error(resp) end
     end
 
     sgpsServed = sgpsServed + 1
