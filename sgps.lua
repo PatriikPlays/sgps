@@ -44,6 +44,8 @@ local expect = dofile("rom/modules/main/cc/expect.lua").expect
 CHANNEL_GPS = 65534
 CHANNEL_SGPS = 65524
 
+SGPS_PROTO_VERSION = 1
+
 local function trilaterate(A, B, C)
     local a2b = B.vPosition - A.vPosition
     local a2c = C.vPosition - A.vPosition
@@ -106,6 +108,13 @@ local function split(str, sep)
         index = index + 1
     end
     return ret
+end
+
+local function ihas(tbl, v) -- this wont work for hash tables
+    for _,x in ipairs(tbl) do
+        if x == v then return true end
+    end
+    return false
 end
 
 --- Tries to retrieve the computer or turtles own location.
@@ -244,8 +253,8 @@ end
 -- @treturn[1] number This computer's `y` position.
 -- @treturn[1] number This computer's `z` position.
 -- @treturn[2] nil If the position could not be established.
-function slocate(pk, _nTimeout, _bDebug)
-    expect(1, pk, "table")
+function slocate(pubkeys, _nTimeout, _bDebug)
+    expect(1, pubkeys, "table")
     expect(2, _nTimeout, "number", "nil")
     expect(3, _bDebug, "boolean", "nil")
     -- Let command computers use their magic fourth-wall-breaking special abilities
@@ -278,18 +287,17 @@ function slocate(pk, _nTimeout, _bDebug)
     local bCloseChannel = false
     if not modem.isOpen(CHANNEL_SGPS) then
         modem.open(CHANNEL_SGPS)
+        sleep(1)
         bCloseChannel = true
     end
 
     -- Send a ping to listening GPS hosts
-    local sentid = ""
+    local challengeString = ""
     for i=1,32 do
-        sentid = sentid .. string.char(math.random(0,255))
+        challengeString = challengeString .. string.char(math.random(0,255)) -- FIXME: USE CSPRNG
     end
 
-    sentid = sentid:gsub(";","\0")
-
-    modem.transmit(CHANNEL_SGPS, CHANNEL_SGPS, sentid)
+    modem.transmit(CHANNEL_SGPS, CHANNEL_SGPS, string.pack(">bc32", SGPS_PROTO_VERSION, challengeString))
 
     -- Wait for the responses
     local tFixes = {}
@@ -301,71 +309,52 @@ function slocate(pk, _nTimeout, _bDebug)
             -- We received a reply from a modem
             local sSide, sChannel, sReplyChannel, tMessage, nDistance = p1, p2, p3, p4, p5
 
-            if sSide == sModemSide and sChannel == CHANNEL_SGPS and sReplyChannel == CHANNEL_SGPS and nDistance then
-                -- Received the correct message from the correct modem: use it to determine position
+            if sSide == sModemSide and sChannel == CHANNEL_SGPS and sReplyChannel == CHANNEL_SGPS and nDistance and type(tMessage) == "string" then
+                local s,e = pcall(function()
+                    local protoVer, sdata, signature, pubkey = string.unpack(">bs2c64c32", tMessage)
+                    if not ihas(pubkeys, pubkey) then return end
 
-                if type(tMessage) == "table" and #tMessage == 2 and type(tMessage[1]) == "string" and type(tMessage[2]) == "string" and #tMessage[2] == 64 and type(tMessage[1]) == "string" and #tMessage[1] < 1024 then
-                    local parsed = split(tMessage[1], ";")
+                    local x, y, z, receivedChallenge, time, meta = string.unpack(">iiic32Ls1", sdata)
+                    if os.epoch("utc") - time > 15000 then return end
+                    if os.epoch("utc") - time < -2500 then return end
+                    if receivedChallenge ~= challengeString then return end
+                    if not ed25519.verify(pubkey, sdata, signature) then return end
 
-                    if parsed[4] == sentid then
-                        local ok = false
-                        for _,v in ipairs(pk) do
-                            if ed25519.verify(v, tMessage[1], tMessage[2]) then
-                                ok = true
-                                break
-                            end
+                    do
+                        local tFix = { vPosition = vector.new(x, y, z), nDistance = nDistance }
+                        if _bDebug then
+                            print(tFix.nDistance .. " metres from " .. tostring(tFix.vPosition))
                         end
-
-                        local x, y, z = tonumber(parsed[1]), tonumber(parsed[2]), tonumber(parsed[3])
-                        local id = parsed[4]
-
-                        if not (type(x) == "number" and type(y) == "number" and type(z) == "number" and type(id) == "string") then
-                            ok = false
-                        end
-
-                        if sentid ~= id then
-                            ok = false
-                        end
-
-                        if not ok and _bDebug then
-                            print("Received response with invalid signature or invalid format")
-                        end
-
-                        if ok then
-                            local tFix = { vPosition = vector.new(x, y, z), nDistance = nDistance }
-                            if _bDebug then
-                                print(tFix.nDistance .. " metres from " .. tostring(tFix.vPosition))
-                            end
-                            if tFix.nDistance == 0 then
-                                pos1, pos2 = tFix.vPosition, nil
-                            else
-                                -- Insert our new position in our table, with a maximum of three items. If this is close to a
-                                -- previous position, replace that instead of inserting.
-                                local insIndex = math.min(3, #tFixes + 1)
-                                for i, older in pairs(tFixes) do
-                                    if (older.vPosition - tFix.vPosition):length() < 1 then
-                                        insIndex = i
-                                        break
-                                    end
-                                end
-                                tFixes[insIndex] = tFix
-
-                                if #tFixes >= 3 then
-                                    if not pos1 then
-                                        pos1, pos2 = trilaterate(tFixes[1], tFixes[2], tFixes[3])
-                                    else
-                                        pos1, pos2 = narrow(pos1, pos2, tFixes[3])
-                                    end
+                        if tFix.nDistance == 0 then
+                            pos1, pos2 = tFix.vPosition, nil
+                        else
+                            -- Insert our new position in our table, with a maximum of three items. If this is close to a
+                            -- previous position, replace that instead of inserting.
+                            local insIndex = math.min(3, #tFixes + 1)
+                            for i, older in pairs(tFixes) do
+                                if (older.vPosition - tFix.vPosition):length() < 1 then
+                                    insIndex = i
+                                    return true
                                 end
                             end
-                            if pos1 and not pos2 then
-                                break
+                            tFixes[insIndex] = tFix
+
+                            if #tFixes >= 3 then
+                                if not pos1 then
+                                    pos1, pos2 = trilaterate(tFixes[1], tFixes[2], tFixes[3])
+                                else
+                                    pos1, pos2 = narrow(pos1, pos2, tFixes[3])
+                                end
                             end
+                        end
+                        if pos1 and not pos2 then
+                            return true
                         end
                     end
-                end
-            end
+                end)
 
+                if s and e then break end
+            end
         elseif e == "timer" then
             -- We received a timeout
             local timer = p1
