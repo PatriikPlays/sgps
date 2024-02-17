@@ -312,6 +312,7 @@ function slocate(pubkeys, _nTimeout, _bDebug)
             if sSide == sModemSide and sChannel == CHANNEL_SGPS and sReplyChannel == CHANNEL_SGPS and nDistance and type(tMessage) == "string" then
                 local s,e = pcall(function()
                     local protoVer, sdata, signature, pubkey = string.unpack(">bs2c64c32", tMessage)
+                    if protoVer ~= SGPS_PROTO_VERSION then return end
                     if not ihas(pubkeys, pubkey) then return end
 
                     local x, y, z, receivedChallenge, time, meta = string.unpack(">iiic32Ls1", sdata)
