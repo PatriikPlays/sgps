@@ -2,6 +2,18 @@
 
 Secure and reliable [ComputerCraft](https://computercraft.cc) GPS for everyone!
 
+## DISCLAIMER
+**NOT intended for constant use**
+
+Examples:
+```diff
+# green = correct usecase
+# red   = incorrect usecase
+
++ turtle pings sGPS to get position on boot
+- NI pings sGPS frequently to receive position
+```
+
 <img src="./assets/diagram.png" width=80% height=80% alt="A diagram showing the inner workings">
 
 ## Technical details
