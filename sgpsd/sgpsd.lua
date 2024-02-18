@@ -1,15 +1,52 @@
 local random = require("ccryptolib.random")
 local ed25519 = require("ccryptolib.ed25519")
 
--- FIXME: make sure that this doesnt bring the gps cluster down ( add more random sources )
-function initRandom()
-  local postHandle = assert(http.post("https://krist.dev/ws/start", ""))
-  local data = textutils.unserializeJSON(postHandle.readAll())
-  postHandle.close()
+local randomSources = {
+  function()
+    local postHandle = assert(http.post("https://krist.dev/ws/start", ""))
+    local data = textutils.unserializeJSON(postHandle.readAll())
+    postHandle.close()
+    http.websocket(data.url).close()
 
-  random.init(data.url)
+    if type(data.url) ~= "string" then error() end
+    return data.url
+  end,
+  function()
+    local h = assert(http.get("https://www.random.org/integers/?num=64&min=0&max=255&col=1&base=16&format=plain&rnd=new"))
+    local d = h.readAll():gsub("\n","")
+    h.close()
 
-  http.websocket(data.url).close()
+    if type(d) ~= "string" or #d ~= 128 then error() end
+    return d
+  end
+}
+
+local function initRandom()
+  local amt = 0
+  local str = ""
+
+  for i=1,32 do
+    str = str .. string.char(math.random(0,255))
+  end
+
+  for i,v in ipairs(randomSources) do
+    if amt == 2 then break end
+
+    local s,e = pcall(v)
+    if s then
+      str = str .. tostring(e)
+      amt = amt + 1
+    else
+      print(string.format("Random source #%d failed", i))
+    end
+  end
+
+  if amt > 0 then
+    print(string.format("Using %d random source%s to init random", amt, amt>1 and "s" or ""))
+    random.init(str)
+  else
+    error("Not enough random sources, at least 1 required")
+  end
 end
 
 initRandom()
