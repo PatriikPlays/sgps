@@ -2,8 +2,10 @@
 
 Secure and reliable [ComputerCraft](https://computercraft.cc) GPS for everyone!
 
-## DISCLAIMER
-**NOT intended for constant use**
+## Constant use
+
+> [!IMPORTANT]
+> This is **NOT** intended for constant use!
 
 Examples:
 ```diff
@@ -11,12 +13,12 @@ Examples:
 # red   = incorrect usecase
 
 + turtle pings sGPS to get position on boot
-- NI pings sGPS frequently to receive position
+- turtle pings sGPS to receive position on every move
 ```
 
-<img src="./assets/diagram.png" width=80% height=80% alt="A diagram showing the inner workings">
-
 ## Technical details
+
+<img src="./assets/diagram.png" width=80% height=80% alt="A diagram showing the inner workings. Described below.">
 
 sGPS uses ed25519 from [ccryptolib](https://github.com/migeyel/ccryptolib) to sign GPS packets once requested.
 Each GPS request packet must contain random data, and the client must also store this data while waiting for responses.
