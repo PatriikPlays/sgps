@@ -1,50 +1,27 @@
---
---
--- THIS IS A TEMPORARY CLIENT
---
---
-
--- SPDX-FileCopyrightText: 2017 Daniel Ratcliffe
---
--- SPDX-License-Identifier: LicenseRef-CCPL
-
---[[- Use [modems][`modem`] to locate the position of the current turtle or
-computers.
-
-It broadcasts a PING message over [`rednet`] and wait for responses. In order for
-this system to work, there must be at least 4 computers used as gps hosts which
-will respond and allow trilateration. Three of these hosts should be in a plane,
-and the fourth should be either above or below the other three. The three in a
-plane should not be in a line with each other. You can set up hosts using the
-gps program.
-
-> [!NOTE]
-> When entering in the coordinates for the host you need to put in the `x`, `y`,
-> and `z` coordinates of the block that the modem is connected to, not the modem.
-> All modem distances are measured from the block that the modem is placed on.
-
-Also note that you may choose which axes x, y, or z refers to - so long as your
-systems have the same definition as any GPS servers that're in range, it works
-just the same. For example, you might build a GPS cluster according to [this
-tutorial][1], using z to account for height, or you might use y to account for
-height in the way that Minecraft's debug screen displays.
-
-[1]: http://www.computercraft.info/forums2/index.php?/topic/3088-how-to-guide-gps-global-position-system/
-
-@module gps
-@since 1.31
-@see gps_setup For more detailed instructions on setting up GPS
-]]
-
 local ed25519 = require("ccryptolib.ed25519")
+local expect = require("cc.expect").expect
 
-local expect = dofile("rom/modules/main/cc/expect.lua").expect
-
---- The channel which GPS requests and responses are broadcast on.
-CHANNEL_GPS = 65534
 CHANNEL_SGPS = 65524
 
-SGPS_PROTO_VERSION = 1
+local PROTOCOL_VERSION = 1
+
+function parseStringifiedKey(key)
+    if #key ~= 64 then
+        return false, "key_length_invalid"
+    end
+
+    local res = ""
+    for i=1,32 do
+        local n = tonumber(key:sub(i*2-1,i*2), 16)
+        if not n then
+            return false, "key_malformed"
+        end
+        res = res .. string.char(n)
+    end
+    return res
+end
+
+local DEFAULT_PUBLIC_KEYS = { parseStringifiedKey("461cfdbc732f44937c4fa5d249a742f5567b0d57d5c7f1eebfdbbd58fb812acf") }
 
 local function trilaterate(A, B, C)
     local a2b = B.vPosition - A.vPosition
@@ -55,15 +32,15 @@ local function trilaterate(A, B, C)
     end
 
     local d = a2b:length()
-    local ex = a2b:normalize( )
+    local ex = a2b:normalize()
     local i = ex:dot(a2c)
     local ey = (a2c - ex * i):normalize()
     local j = ey:dot(a2c)
     local ez = ex:cross(ey)
 
-    local r1 = A.nDistance
-    local r2 = B.nDistance
-    local r3 = C.nDistance
+    local r1 = A.distance
+    local r2 = B.distance
+    local r3 = C.distance
 
     local x = (r1 * r1 - r2 * r2 + d * d) / (2 * d)
     local y = (r1 * r1 - r3 * r3 - x * x + (x - i) * (x - i) + j * j) / (2 * j)
@@ -83,13 +60,13 @@ local function trilaterate(A, B, C)
             return rounded1
         end
     end
-    return result:round(0.01)
 
+    return result:round(0.01)
 end
 
 local function narrow(p1, p2, fix)
-    local dist1 = math.abs((p1 - fix.vPosition):length() - fix.nDistance)
-    local dist2 = math.abs((p2 - fix.vPosition):length() - fix.nDistance)
+    local dist1 = math.abs((p1 - fix.vPosition):length() - fix.distance)
+    local dist2 = math.abs((p2 - fix.vPosition):length() - fix.distance)
 
     if math.abs(dist1 - dist2) < 0.01 then
         return p1, p2
@@ -100,220 +77,63 @@ local function narrow(p1, p2, fix)
     end
 end
 
-local function split(str, sep)
-    sep = sep or "%s"
-    local ret, index = {}, 1
-    for match in string.gmatch(str, "([^"..sep.."]+)") do
-        ret[index] = match
-        index = index + 1
-    end
-    return ret
-end
-
-local function ihas(tbl, v) -- this wont work for hash tables
-    for _,x in ipairs(tbl) do
-        if x == v then return true end
-    end
-    return false
-end
-
---- Tries to retrieve the computer or turtles own location.
---
--- @tparam[opt=2] number timeout The maximum time in seconds taken to establish our
--- position.
--- @tparam[opt=false] boolean debug Print debugging messages
--- @treturn[1] number This computer's `x` position.
--- @treturn[1] number This computer's `y` position.
--- @treturn[1] number This computer's `z` position.
--- @treturn[2] nil If the position could not be established.
-function locate(_nTimeout, _bDebug)
-    expect(1, _nTimeout, "number", "nil")
-    expect(2, _bDebug, "boolean", "nil")
-    -- Let command computers use their magic fourth-wall-breaking special abilities
-    if commands then
-        return commands.getBlockPosition()
-    end
-
-    -- Find a modem
-    local sModemSide = nil
-    for _, sSide in ipairs(rs.getSides()) do
-        if peripheral.getType(sSide) == "modem" and peripheral.call(sSide, "isWireless") then
-            sModemSide = sSide
-            break
-        end
-    end
-
-    if sModemSide == nil then
-        if _bDebug then
-            print("No wireless modem attached")
-        end
-        return nil
-    end
-
-    if _bDebug then
-        print("Finding position...")
-    end
-
-    -- Open GPS channel to listen for ping responses
-    local modem = peripheral.wrap(sModemSide)
-    local bCloseChannel = false
-    if not modem.isOpen(CHANNEL_GPS) then
-        modem.open(CHANNEL_GPS)
-        bCloseChannel = true
-    end
-
-    -- Send a ping to listening GPS hosts
-    modem.transmit(CHANNEL_GPS, CHANNEL_GPS, "PING")
-
-    -- Wait for the responses
-    local tFixes = {}
-    local pos1, pos2 = nil, nil
-    local timeout = os.startTimer(_nTimeout or 2)
-    while true do
-        local e, p1, p2, p3, p4, p5 = os.pullEvent()
-        if e == "modem_message" then
-            -- We received a reply from a modem
-            local sSide, sChannel, sReplyChannel, tMessage, nDistance = p1, p2, p3, p4, p5
-            if sSide == sModemSide and sChannel == CHANNEL_GPS and sReplyChannel == CHANNEL_GPS and nDistance then
-                -- Received the correct message from the correct modem: use it to determine position
-                if type(tMessage) == "table" and #tMessage == 3 and tonumber(tMessage[1]) and tonumber(tMessage[2]) and tonumber(tMessage[3]) then
-                    local tFix = { vPosition = vector.new(tMessage[1], tMessage[2], tMessage[3]), nDistance = nDistance }
-                    if _bDebug then
-                        print(tFix.nDistance .. " metres from " .. tostring(tFix.vPosition))
-                    end
-                    if tFix.nDistance == 0 then
-                        pos1, pos2 = tFix.vPosition, nil
-                    else
-                        -- Insert our new position in our table, with a maximum of three items. If this is close to a
-                        -- previous position, replace that instead of inserting.
-                        local insIndex = math.min(3, #tFixes + 1)
-                        for i, older in pairs(tFixes) do
-                            if (older.vPosition - tFix.vPosition):length() < 1 then
-                                insIndex = i
-                                break
-                            end
-                        end
-                        tFixes[insIndex] = tFix
-
-                        if #tFixes >= 3 then
-                            if not pos1 then
-                                pos1, pos2 = trilaterate(tFixes[1], tFixes[2], tFixes[3])
-                            else
-                                pos1, pos2 = narrow(pos1, pos2, tFixes[3])
-                            end
-                        end
-                    end
-                    if pos1 and not pos2 then
-                        break
-                    end
-                end
-            end
-
-        elseif e == "timer" then
-            -- We received a timeout
-            local timer = p1
-            if timer == timeout then
-                break
-            end
-
-        end
-    end
-
-    -- Close the channel, if we opened one
-    if bCloseChannel then
-        modem.close(CHANNEL_GPS)
-    end
-
-    -- Return the response
-    if pos1 and pos2 then
-        if _bDebug then
-            print("Ambiguous position")
-            print("Could be " .. pos1.x .. "," .. pos1.y .. "," .. pos1.z .. " or " .. pos2.x .. "," .. pos2.y .. "," .. pos2.z)
-        end
-        return nil
-    elseif pos1 then
-        if _bDebug then
-            print("Position is " .. pos1.x .. "," .. pos1.y .. "," .. pos1.z)
-        end
-        return pos1.x, pos1.y, pos1.z
-    else
-        if _bDebug then
-            print("Could not determine position")
-        end
-        return nil
+local function has(tbl, val)
+    for _,v in ipairs(tbl) do
+        if v == val then return true end
     end
 end
 
---- Tries to retrieve the computer or turtles own location.
---
--- @tparam[opt=2] number timeout The maximum time in seconds taken to establish our
--- position.
--- @tparam[opt=false] boolean debug Print debugging messages
--- @treturn[1] number This computer's `x` position.
--- @treturn[1] number This computer's `y` position.
--- @treturn[1] number This computer's `z` position.
--- @treturn[2] nil If the position could not be established.
-function slocate(pubkeys, _nTimeout, _bDebug)
-    expect(1, pubkeys, "table")
-    expect(2, _nTimeout, "number", "nil")
-    expect(3, _bDebug, "boolean", "nil")
-    -- Let command computers use their magic fourth-wall-breaking special abilities
-    if commands then
-        return commands.getBlockPosition()
-    end
-
-    -- Find a modem
-    local sModemSide = nil
-    for _, sSide in ipairs(rs.getSides()) do
-        if peripheral.getType(sSide) == "modem" and peripheral.call(sSide, "isWireless") then
-            sModemSide = sSide
-            break
+local function findWirelessModem()
+    for _, s in ipairs(rs.getSides()) do
+        if peripheral.getType(s) == "modem" and peripheral.call(s, "isWireless") then
+            return s
         end
     end
+end
 
-    if sModemSide == nil then
-        if _bDebug then
-            print("No wireless modem attached")
-        end
+local function cprint(condition, str)
+    if condition then print(str) end
+end
+
+function locate(timeout, debug, pubkeys)
+    timeout = timeout or 2
+    expect(1, timeout, "number")
+    expect(2, debug, "boolean", "nil")
+    expect(3, pubkeys, "table")
+
+    local modemName = findWirelessModem()
+    if not modemName then
+        cprint(debug, "Failed to find wireless modem")
         return nil
     end
+    local modem = peripheral.wrap(modemName)
 
-    if _bDebug then
-        print("Finding position...")
-    end
+    local wasSGPSOpen = modem.isOpen(CHANNEL_SGPS)
+    if not wasSGPSOpen then modem.open(CHANNEL_SGPS) end
+    cprint(debug and not wasSGPSOpen, "Opened SGPS channel")
+    cprint(debug and wasSGPSOpen, "SGPS channel already open")
 
-    -- Open GPS channel to listen for ping responses
-    local modem = peripheral.wrap(sModemSide)
-    local bCloseChannel = false
-    if not modem.isOpen(CHANNEL_SGPS) then
-        modem.open(CHANNEL_SGPS)
-        sleep(1)
-        bCloseChannel = true
-    end
-
-    -- Send a ping to listening GPS hosts
+    cprint(debug, "Transmitting SGPS ping")
     local challengeString = ""
     for i=1,32 do
         challengeString = challengeString .. string.char(math.random(0,255)) -- FIXME: USE CSPRNG
     end
+    modem.transmit(CHANNEL_SGPS, CHANNEL_SGPS, string.pack(">bc32", PROTOCOL_VERSION, challengeString))
 
-    modem.transmit(CHANNEL_SGPS, CHANNEL_SGPS, string.pack(">bc32", SGPS_PROTO_VERSION, challengeString))
-
-    -- Wait for the responses
-    local tFixes = {}
+    local fixes = {}
     local pos1, pos2 = nil, nil
-    local timeout = os.startTimer(_nTimeout or 2)
+    local timeoutTimer = os.startTimer(timeout)
     while true do
         local e, p1, p2, p3, p4, p5 = os.pullEvent()
         if e == "modem_message" then
-            -- We received a reply from a modem
-            local sSide, sChannel, sReplyChannel, tMessage, nDistance = p1, p2, p3, p4, p5
 
-            if sSide == sModemSide and sChannel == CHANNEL_SGPS and sReplyChannel == CHANNEL_SGPS and nDistance and type(tMessage) == "string" then
+            local side, channel, replyChannel, message, distance = p1, p2, p3, p4, p5
+
+            if side == modemName and channel == CHANNEL_SGPS and replyChannel == CHANNEL_SGPS and distance and type(message) == "string" then
                 local s,e = pcall(function()
-                    local protoVer, sdata, signature, pubkey = string.unpack(">bs2c64c32", tMessage)
-                    if protoVer ~= SGPS_PROTO_VERSION then return end
-                    if not ihas(pubkeys, pubkey) then return end
+                    local protoVer, sdata, signature, pubkey = string.unpack(">bs2c64c32", message)
+                    if protoVer ~= PROTOCOL_VERSION then return end
+                    if not has(pubkeys, pubkey) then return end
 
                     local x, y, z, receivedChallenge, time, meta = string.unpack(">iiic32Ls1", sdata)
                     if os.epoch("utc") - time > 15000 then return end
@@ -322,29 +142,27 @@ function slocate(pubkeys, _nTimeout, _bDebug)
                     if not ed25519.verify(pubkey, sdata, signature) then return end
 
                     do
-                        local tFix = { vPosition = vector.new(x, y, z), nDistance = nDistance }
-                        if _bDebug then
-                            print(tFix.nDistance .. " metres from " .. tostring(tFix.vPosition))
-                        end
-                        if tFix.nDistance == 0 then
+                        local tFix = { vPosition = vector.new(x, y, z), distance = distance }
+                        cprint(debug, tFix.distance .. " metres from " .. tostring(tFix.vPosition))
+                        if tFix.distance == 0 then
                             pos1, pos2 = tFix.vPosition, nil
                         else
                             -- Insert our new position in our table, with a maximum of three items. If this is close to a
                             -- previous position, replace that instead of inserting.
-                            local insIndex = math.min(3, #tFixes + 1)
-                            for i, older in pairs(tFixes) do
+                            local insIndex = math.min(3, #fixes + 1)
+                            for i, older in pairs(fixes) do
                                 if (older.vPosition - tFix.vPosition):length() < 1 then
                                     insIndex = i
                                     return true
                                 end
                             end
-                            tFixes[insIndex] = tFix
+                            fixes[insIndex] = tFix
 
-                            if #tFixes >= 3 then
+                            if #fixes >= 3 then
                                 if not pos1 then
-                                    pos1, pos2 = trilaterate(tFixes[1], tFixes[2], tFixes[3])
+                                    pos1, pos2 = trilaterate(fixes[1], fixes[2], fixes[3])
                                 else
-                                    pos1, pos2 = narrow(pos1, pos2, tFixes[3])
+                                    pos1, pos2 = narrow(pos1, pos2, fixes[3])
                                 end
                             end
                         end
@@ -357,54 +175,29 @@ function slocate(pubkeys, _nTimeout, _bDebug)
                 if s and e then break end
             end
         elseif e == "timer" then
-            -- We received a timeout
-            local timer = p1
-            if timer == timeout then
+            if p1 == timeoutTimer then
                 break
             end
-
         end
     end
 
-    -- Close the channel, if we opened one
-    if bCloseChannel then
+    if not wasSGPSOpen then
         modem.close(CHANNEL_SGPS)
     end
 
-    -- Return the response
     if pos1 and pos2 then
-        if _bDebug then
+        if debug then
             print("Ambiguous position")
             print("Could be " .. pos1.x .. "," .. pos1.y .. "," .. pos1.z .. " or " .. pos2.x .. "," .. pos2.y .. "," .. pos2.z)
         end
         return nil
     elseif pos1 then
-        if _bDebug then
-            print("Position is " .. pos1.x .. "," .. pos1.y .. "," .. pos1.z)
-        end
+        cprint(debug, "Position is " .. pos1.x .. "," .. pos1.y .. "," .. pos1.z)
         return pos1.x, pos1.y, pos1.z
     else
-        if _bDebug then
-            print("Could not determine position")
-        end
+        cprint(debug, "Could not determine position")
         return nil
     end
 end
 
-local function parseStringifiedKey(key)
-    if #key ~= 64 then
-      return false, "key_length_invalid"
-    end
-
-    local res = ""
-    for i=1,32 do
-      local n = tonumber(key:sub(i*2-1,i*2), 16)
-      if not n then
-        return false, "key_malformated"
-      end
-      res = res .. string.char(n)
-    end
-    return res
-  end
-
-return {locate=locate, slocate=slocate, parseStringifiedKey=parseStringifiedKey}
+return {locate=locate, parseStringifiedKey=parseStringifiedKey, DEFAULT_PUBLIC_KEYS=DEFAULT_PUBLIC_KEYS}
