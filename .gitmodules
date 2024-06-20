@@ -1,0 +1,3 @@
+[submodule "client/ccryptolib"]
+	path = ccryptolib
+	url = https://github.com/migeyel/ccryptolib
