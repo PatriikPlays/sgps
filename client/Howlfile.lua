@@ -37,7 +37,7 @@ local Task = require "howl.tasks.Task"
 local assert = require "howl.lib.assert"
 local Runner = require "howl.tasks.Runner"
 
-Options:Default("verbose")
+Options:Default("trace")
 
 Tasks:clean()
 
