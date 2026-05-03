@@ -1,6 +1,8 @@
 local random = require("ccryptolib.random")
 local ed25519 = require("ccryptolib.ed25519")
 
+local accel = peripheral.find("cryptographic_accelerator") -- can be nil
+
 local randomSources = {
   function()
     local postHandle = assert(http.post("https://krist.dev/ws/start", ""))
@@ -22,30 +24,35 @@ local randomSources = {
 }
 
 local function initRandom()
-  local amt = 0
-  local str = ""
-
-  for i=1,32 do
-    str = str .. string.char(math.random(0,255))
-  end
-
-  for i,v in ipairs(randomSources) do
-    if amt == 2 then break end
-
-    local s,e = pcall(v)
-    if s then
-      str = str .. tostring(e)
-      amt = amt + 1
-    else
-      print(string.format("Random source #%d failed", i))
-    end
-  end
-
-  if amt > 0 then
-    print(string.format("Using %d random source%s to init random", amt, amt>1 and "s" or ""))
-    random.init(str)
+  if accel then
+    print("Initializing random using Crypto Accelerator")
+    random.init(accel.randomBytes(32))
   else
-    error("Not enough random sources, at least 1 required")
+    local amt = 0
+    local str = ""
+
+    for i=1,32 do
+      str = str .. string.char(math.random(0,255))
+    end
+
+    for i,v in ipairs(randomSources) do
+      if amt == 2 then break end
+
+      local s,e = pcall(v)
+      if s then
+        str = str .. tostring(e)
+        amt = amt + 1
+      else
+        print(string.format("Random source #%d failed", i))
+      end
+    end
+
+    if amt > 0 then
+      print(string.format("Using %d random source%s to init random", amt, amt>1 and "s" or ""))
+      random.init(str)
+    else
+      error("Not enough random sources, at least 1 required")
+    end
   end
 end
 
@@ -169,12 +176,20 @@ do
   h.close()
 end
 
+local function sign(secretKey, publicKey, message)
+  if accel then
+    return accel.sign(message, secretKey)
+  else
+    return ed25519.sign(secretKey, publicKey, message)
+  end
+end
+
 -- TODO: great idea, don't rely on big pcall
 local function mkresponse(VERSION, data)
   if VERSION == 1 then
     local respData = string.pack(">iiic32Ls1", data.pos[1], data.pos[2], data.pos[3], data.challengeString, os.epoch("utc"), config.sgpsMeta)
 
-    return string.pack(">bs2c64c32", VERSION, respData, ed25519.sign(secretKey, publicKey, respData), publicKey)
+    return string.pack(">bs2c64c32", VERSION, respData, sign(secretKey, publicKey, respData), publicKey)
   end
 
   return false
