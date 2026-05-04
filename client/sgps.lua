@@ -5,7 +5,7 @@ CHANNEL_SGPS = 65524
 
 local PROTOCOL_VERSION = 1
 
-function parseStringifiedKey(key)
+local function parseStringifiedKey(key)
     if #key ~= 64 then
         return false, "key_length_invalid"
     end
@@ -21,7 +21,11 @@ function parseStringifiedKey(key)
     return res
 end
 
-local DEFAULT_PUBLIC_KEYS = { parseStringifiedKey("461cfdbc732f44937c4fa5d249a742f5567b0d57d5c7f1eebfdbbd58fb812acf") }
+local DEFAULT_PUBLIC_KEYS = {
+    --parseStringifiedKey("461cfdbc732f44937c4fa5d249a742f5567b0d57d5c7f1eebfdbbd58fb812acf"), -- SC3 overworld
+    parseStringifiedKey("43ea42e07d5c4adf6b11ba8646f89235f3483fa625b5be14457fb66029ae91c5"), -- RCC overworld
+    parseStringifiedKey("61fc6c0f66d21bf6371e1bc26461d50b833ab60f57a2ec87305e0b07fdce1d76"), -- RCC nether
+}
 
 local function trilaterate(A, B, C)
     local a2b = B.vPosition - A.vPosition
@@ -95,11 +99,17 @@ local function cprint(condition, str)
     if condition then print(str) end
 end
 
-function locate(timeout, debug, pubkeys)
+local function locate(timeout, debug, pubkeys, forceCryptoAccel)
     timeout = timeout or 2
     expect(1, timeout, "number")
     expect(2, debug, "boolean", "nil")
     expect(3, pubkeys, "table")
+
+    local accel = peripheral.find("cryptographic_accelerator")
+
+    if forceCryptoAccel and not accel then
+        error("No Cryotographic Accelerator, but forceCryptoAccel is enabled")
+    end
 
     local modemName = findWirelessModem()
     if not modemName then
@@ -139,7 +149,11 @@ function locate(timeout, debug, pubkeys)
                     if os.epoch("utc") - time > 15000 then return end
                     if os.epoch("utc") - time < -2500 then return end
                     if receivedChallenge ~= challengeString then return end
-                    if not ed25519.verify(pubkey, sdata, signature) then return end
+                    if accel then
+                        if not accel.verify(sdata, signature, pubkey) then return end
+                    else
+                        if not ed25519.verify(pubkey, sdata, signature) then return end
+                    end
 
                     do
                         local tFix = { vPosition = vector.new(x, y, z), distance = distance }
